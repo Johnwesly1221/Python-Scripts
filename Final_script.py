@@ -22,59 +22,68 @@ def login():
     print("[+] Logged in successfully.")
 
 # --- Where Used ---
-def get_where_used(host_name):
+def get_where_used(object_name):
     headers = {"X-chkp-sid": sid, "Content-Type": "application/json"}
-    payload = {"name": host_name, "indirect": False}
+    payload = {"name": object_name, "indirect": False}
     response = requests.post(f"{mgmt_server}/where-used", json=payload, headers=headers, verify=False)
     response.raise_for_status()
     return response.json()
 
-# --- Remove Host from Rules ---
-def remove_host_from_rules(host_name, usage_data):
+# --- Remove Object from Rules ---
+def remove_object_from_rules(object_name, usage_data):
     headers = {"X-chkp-sid": sid, "Content-Type": "application/json"}
     rules = usage_data["used-directly"].get("access-control-rules", [])
-    print(f"[+] Found {len(rules)} access control rules using host '{host_name}'.")
+    print(f"[+] Found {len(rules)} access control rules using object '{object_name}'.")
 
     if not rules:
         print("[!] No rules found. Exiting.")
         return False
 
-    print("[*] Rules using host before removal:")
+    print("[*] Rules using object before removal:")
     for ref in rules:
-        print(f"    - Rule UID: {ref['rule']['uid']} in layer: {ref['layer']['name']}")
+        rule_uid = ref["rule"]["uid"]
+        layer = ref["layer"]["name"]
 
-    confirm = input(f"[?] Host '{host_name}' found in rules. Do you want to proceed with removal? (yes/no): ").strip().lower()
+        # Fetch rule name
+        get_payload = {"uid": rule_uid, "layer": layer, "details-level": "full"}
+        get_resp = requests.post(f"{mgmt_server}/show-access-rule", json=get_payload, headers=headers, verify=False)
+        if get_resp.status_code == 200:
+            rule_data = get_resp.json()
+            rule_name = rule_data.get("name", "Unnamed Rule")
+            print(f"    - Rule UID: {rule_uid}, Rule Name: {rule_name}")
+        else:
+            print(f"    - Rule UID: {rule_uid} [Name fetch failed]")
+
+    confirm = input(f"[?] Object '{object_name}' found in rules. Do you want to proceed with removal? (yes/no): ").strip().lower()
     if confirm != "yes":
         print("[!] Removal aborted by user.")
         return False
 
     any_updated = False
+    valid_types = {"host", "network", "group", "user", "group-with-exclusion"}
 
     for ref in rules:
-        layer = ref["layer"]["name"]
         rule_uid = ref["rule"]["uid"]
+        layer = ref["layer"]["name"]
 
-        # Get current rule
-        get_payload = {"uid": rule_uid, "layer": layer}
+        # Get current rule with full details
+        get_payload = {"uid": rule_uid, "layer": layer, "details-level": "full"}
         get_resp = requests.post(f"{mgmt_server}/show-access-rule", json=get_payload, headers=headers, verify=False)
         if get_resp.status_code != 200:
-            print(f"[!] Failed to fetch rule {rule_uid}: {get_resp.text}")
+            print(f"\n[→] Rule UID: {rule_uid}")
+            print(f"[!] Failed to fetch rule details: {get_resp.text}")
             continue
 
         rule_data = get_resp.json()
-        print(f"[i] Rule {rule_uid} fields: {list(rule_data.keys())}")
+        rule_name = rule_data.get("name", "Unnamed Rule")
+        print(f"\n[→] Rule UID: {rule_uid}, Rule Name: {rule_name}")
 
-        for field in ["source", "destination"]:
-            value = rule_data.get(field)
-            if value:
-                print(f"[→] {field}: {value}")
-
-        updated = False
+        removed_fields = []
 
         for field in ["source", "destination"]:
             current_list = rule_data.get(field, [])
-            if any(obj.get("type") == "host" and obj.get("name") == host_name for obj in current_list):
-                new_list = [obj["uid"] for obj in current_list if not (obj.get("type") == "host" and obj.get("name") == host_name)]
+            if any(obj.get("type") in valid_types and obj.get("name", "").lower() == object_name.lower() for obj in current_list):
+                new_list = [obj["uid"] for obj in current_list if not (obj.get("type") in valid_types and obj.get("name", "").lower() == object_name.lower())]
                 update_payload = {
                     "uid": rule_uid,
                     "layer": layer,
@@ -82,14 +91,14 @@ def remove_host_from_rules(host_name, usage_data):
                 }
                 update_resp = requests.post(f"{mgmt_server}/set-access-rule", json=update_payload, headers=headers, verify=False)
                 if update_resp.status_code == 200:
-                    print(f"[-] Removed host '{host_name}' from {field} in rule {rule_uid}.")
-                    updated = True
+                    print(f"[✓] Removed '{object_name}' from {field}")
+                    removed_fields.append(field)
                     any_updated = True
                 else:
                     print(f"[!] Failed to update {field} in rule {rule_uid}: {update_resp.text}")
 
-        if not updated:
-            print(f"[!] Host '{host_name}' not found in rule {rule_uid} source/destination.")
+        if not removed_fields:
+            print(f"[!] Object '{object_name}' not found in source or destination")
 
     return any_updated
 
@@ -103,17 +112,17 @@ def discard():
         print(f"[!] Failed to discard changes: {response.text}")
 
 # --- Publish Changes ---
-def publish(host_name):
-    usage_check = get_where_used(host_name)
+def publish(object_name):
+    usage_check = get_where_used(object_name)
     still_used = usage_check["used-directly"].get("access-control-rules", [])
 
     if still_used:
-        print(f"[!] Host '{host_name}' is still used in {len(still_used)} rule(s).")
-        print("[*] Host still used in the following rules:")
+        print(f"[!] Object '{object_name}' is still used in {len(still_used)} rule(s).")
+        print("[*] Still used in the following rules:")
         for ref in still_used:
-            print(f"    - Rule UID: {ref['rule']['uid']} in layer: {ref['layer']['name']}")
+            print(f"    - Rule UID: {ref['rule']['uid']}")
     else:
-        print(f"[✓] Host '{host_name}' is no longer used in any access rules.")
+        print(f"[✓] Object '{object_name}' is no longer used in any access rules.")
 
     confirm = input("[?] Do you want to publish changes? (yes/no): ").strip().lower()
     if confirm != "yes":
@@ -125,13 +134,21 @@ def publish(host_name):
     response.raise_for_status()
     print("[+] Changes published.")
 
+# --- Logout Session ---
+def logout():
+    headers = {"X-chkp-sid": sid}
+    requests.post(f"{mgmt_server}/logout", headers=headers, verify=False)
+
 # --- Main Execution ---
 if __name__ == "__main__":
     try:
-        host_name = input("Enter the Host name: ").strip()
+        object_name = input("Enter the object name (host/network/user): ").strip()
         login()
-        usage = get_where_used(host_name)
-        if remove_host_from_rules(host_name, usage):
-            publish(host_name)
+        usage = get_where_used(object_name)
+        if remove_object_from_rules(object_name, usage):
+            publish(object_name)
     except Exception as e:
         print(f"[!] Error: {e}")
+    finally:
+        logout()
+print("[*] Logout Successfull.")

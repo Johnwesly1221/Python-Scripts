@@ -1,4 +1,4 @@
-# Checkpoint Mirror & Termination Full Script
+# Checkpoint Mirror & Termination Full Script without comments and without discard function.
 import requests
 import urllib3
 import getpass

@@ -1,3 +1,4 @@
+# Server Decomm Testing script 20251029 10:01AM
 import requests
 import urllib3
 import getpass
@@ -292,11 +293,13 @@ if __name__ == "__main__":
             for group_name in group_names:
                 handle_group_reference(object_name, group_name)
                 print()
+                """
 
                 # 🚪 Early exit if user skips removal and no rules exist
                 if rule_count == 0:
                     print("[!] No rules found. Exiting.")
                     exit()
+                    """
         else:
             print(f"[!] Object '{object_name}' is not part of any group.")
             print()
@@ -304,7 +307,7 @@ if __name__ == "__main__":
         # 🧹 Then handle direct rule references
         rule_removed = remove_object_from_rules(object_name, usage)
         print()
-
+        
         # 🚪 Early exit if no changes were made
         if not rule_removed and not group_names:
             print("[!] No rules found. Exiting.")
